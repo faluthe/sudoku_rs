@@ -190,4 +190,23 @@ mod render_test {
         let screen = rendered(&app, 100, 24);
         assert!(screen.contains('┗') && screen.contains('┛'));
     }
+
+    #[test]
+    fn notes_visible_below_fullscreen() {
+        // At a height too small for the full 37-row board, adding notes must
+        // still change what's drawn (i.e. notes render, not just get stored).
+        let mut app = App::new(Difficulty::Easy);
+        let before = rendered(&app, 100, 34);
+        'find: for r in 0..9 {
+            for c in 0..9 {
+                if app.board.value(r, c).is_none() {
+                    app.board.cell_mut(r, c).toggle_note(2);
+                    app.board.cell_mut(r, c).toggle_note(8);
+                    break 'find;
+                }
+            }
+        }
+        let after = rendered(&app, 100, 34);
+        assert_ne!(before, after);
+    }
 }

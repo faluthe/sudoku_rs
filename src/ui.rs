@@ -14,24 +14,46 @@ use ratatui::{
 // Width of the info panel beside the board.
 const INFO_W: u16 = 28;
 
-/// Cell dimensions are chosen at draw time to fit the terminal. A cell is at
-/// most 5x3 (which fits a full 3x3 pencil-mark grid) and at least 3x1.
+/// Cell dimensions are chosen at draw time to fit the terminal. Cells are kept
+/// 3 rows tall (so pencil marks show) for as long as possible — dropping the
+/// thin gridlines between cells before shrinking the cells themselves.
 struct CellSize {
     w: usize,
     h: usize,
+    /// Whether thin gridlines are drawn between cells within a box. When false,
+    /// only the heavy box borders are drawn, which saves vertical space.
+    inner_lines: bool,
 }
 
 impl CellSize {
-    /// Pick the largest cell that lets the 9x9 board (plus its 10 gridlines in
-    /// each direction) fit within `area`.
+    /// Pick the densest layout that still fits `area`, preferring tall (3-row)
+    /// cells so notes remain visible.
     fn fit(area: Rect) -> CellSize {
-        let h = (((area.height as i32 - 10) / 9).clamp(1, 3)) as usize;
-        // Notes need a 3-row cell; otherwise a narrower cell is enough.
-        let preferred_w = if h == 3 { 5 } else { 3 };
-        let max_w = (((area.width as i32 - 10) / 9).clamp(3, 7)) as usize;
+        let avail = area.height as i32;
+        // Candidates from richest to most compact; each prefers keeping notes.
+        for &(h, inner) in &[
+            (3, true),
+            (3, false),
+            (2, true),
+            (2, false),
+            (1, true),
+            (1, false),
+        ] {
+            let border_rows = if inner { 10 } else { 4 };
+            if avail >= 9 * h + border_rows {
+                return CellSize::with_width(h, inner, area.width);
+            }
+        }
+        // Terminal is shorter than any full board; use the smallest and clip.
+        CellSize::with_width(1, false, area.width)
+    }
+
+    fn with_width(h: i32, inner_lines: bool, area_w: u16) -> CellSize {
+        let max_w = (((area_w as i32 - 10) / 9).clamp(3, 7)) as usize;
         CellSize {
-            w: preferred_w.min(max_w),
-            h,
+            w: 5.min(max_w),
+            h: h as usize,
+            inner_lines,
         }
     }
 
@@ -40,10 +62,11 @@ impl CellSize {
     }
 
     fn board_h(&self) -> u16 {
-        (9 * self.h + 10) as u16
+        let border_rows = if self.inner_lines { 10 } else { 4 };
+        (9 * self.h + border_rows) as u16
     }
 
-    /// Whether cells are tall enough to display pencil-mark notes.
+    /// Whether cells are tall enough for the 3x3 pencil-mark grid.
     fn shows_notes(&self) -> bool {
         self.h >= 3
     }
@@ -161,23 +184,34 @@ fn border_line(hi: usize, cw: usize) -> Line<'static> {
     Line::from(Span::styled(s, Style::default().fg(BORDER)))
 }
 
-/// The `cw` glyphs for sub-row `sub` of a cell: a centered value, or (only in
-/// tall cells) the pencil marks at their fixed positions, or blanks.
+/// The `cw` glyphs for sub-row `sub` of a cell: a centered value, the pencil
+/// marks, or blanks.
 fn cell_glyphs(cell: &Cell, size: &CellSize, sub: usize) -> String {
     let mut out = vec![' '; size.w];
     if let Some(v) = cell.value {
         if sub == size.h / 2 {
             out[size.w / 2] = (b'0' + v) as char;
         }
-    } else if size.shows_notes() {
-        // Notes 1-3 / 4-6 / 7-9 sit on rows 0/1/2; spread across the width when
-        // there's room, otherwise packed to the left.
-        let cols: [usize; 3] = if size.w >= 5 { [0, 2, 4] } else { [0, 1, 2] };
-        for k in 0..3 {
-            let n = (sub * 3 + k + 1) as u8;
-            if cell.has_note(n) {
-                out[cols[k]] = (b'0' + n) as char;
+    } else if cell.notes != 0 {
+        if size.shows_notes() {
+            // Notes 1-3 / 4-6 / 7-9 sit on rows 0/1/2; spread across the width
+            // when there's room, otherwise packed to the left.
+            let cols: [usize; 3] = if size.w >= 5 { [0, 2, 4] } else { [0, 1, 2] };
+            for k in 0..3 {
+                let n = (sub * 3 + k + 1) as u8;
+                if cell.has_note(n) {
+                    out[cols[k]] = (b'0' + n) as char;
+                }
             }
+        } else if sub == size.h / 2 {
+            // Too short for the grid: list the candidates, centered and clipped.
+            let cand: Vec<char> = (1..=9)
+                .filter(|&n| cell.has_note(n))
+                .map(|n| (b'0' + n) as char)
+                .collect();
+            let shown = cand.len().min(size.w);
+            let start = (size.w - shown) / 2;
+            out[start..start + shown].copy_from_slice(&cand[..shown]);
         }
     }
     out.into_iter().collect()
@@ -206,7 +240,11 @@ fn cell_bg(app: &App, r: usize, c: usize) -> Option<Color> {
 fn draw_board(f: &mut Frame, app: &App, area: Rect, size: &CellSize) {
     let mut lines: Vec<Line> = Vec::with_capacity(size.board_h() as usize);
     for r in 0..9 {
-        lines.push(border_line(r, size.w));
+        // Box borders (rows 0/3/6) are always drawn; thin inner borders only
+        // when there's room.
+        if r % 3 == 0 || size.inner_lines {
+            lines.push(border_line(r, size.w));
+        }
         for sub in 0..size.h {
             lines.push(content_line(app, r, sub, size));
         }
