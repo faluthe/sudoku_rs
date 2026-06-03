@@ -341,6 +341,27 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(spans));
     }
 
+    // What's still missing from the selected cell's row, column, and box.
+    let (cr, cc) = app.cursor;
+    let unit_line = |name: &str, missing: Vec<u8>| {
+        let label = Span::styled(format!("{:<5}", name), Style::default().fg(Color::Gray));
+        let body = if missing.is_empty() {
+            Span::styled("✓", Style::default().fg(Color::Rgb(90, 140, 90)))
+        } else {
+            let digits: Vec<String> = missing.iter().map(|n| n.to_string()).collect();
+            Span::styled(digits.join(" "), Style::default().fg(Color::Rgb(200, 200, 210)))
+        };
+        Line::from(vec![label, body])
+    };
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Missing here",
+        Style::default().fg(Color::Gray),
+    )));
+    lines.push(unit_line("Row", app.board.missing_in_row(cr)));
+    lines.push(unit_line("Col", app.board.missing_in_col(cc)));
+    lines.push(unit_line("Box", app.board.missing_in_box(cr, cc)));
+
     if app.is_won() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(

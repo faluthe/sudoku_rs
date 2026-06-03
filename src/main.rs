@@ -210,3 +210,4 @@ mod render_test {
         assert_ne!(before, after);
     }
 }
+

@@ -173,6 +173,32 @@ impl Board {
     pub fn count_value(&self, v: u8) -> usize {
         self.cells.iter().filter(|c| c.value == Some(v)).count()
     }
+
+    /// Digits 1..=9 not yet present in `row`, in ascending order.
+    pub fn missing_in_row(&self, row: usize) -> Vec<u8> {
+        Self::missing((0..9).filter_map(|c| self.value(row, c)))
+    }
+
+    /// Digits 1..=9 not yet present in `col`, in ascending order.
+    pub fn missing_in_col(&self, col: usize) -> Vec<u8> {
+        Self::missing((0..9).filter_map(|r| self.value(r, col)))
+    }
+
+    /// Digits 1..=9 not yet present in the 3x3 box containing (row, col).
+    pub fn missing_in_box(&self, row: usize, col: usize) -> Vec<u8> {
+        let (br, bc) = (row / 3 * 3, col / 3 * 3);
+        let values = (br..br + 3).flat_map(|r| (bc..bc + 3).filter_map(move |c| self.value(r, c)));
+        Self::missing(values)
+    }
+
+    /// Given the values present in some unit, return the absent digits 1..=9.
+    fn missing(values: impl Iterator<Item = u8>) -> Vec<u8> {
+        let mut present = [false; 10];
+        for v in values {
+            present[v as usize] = true;
+        }
+        (1..=9).filter(|&n| !present[n as usize]).collect()
+    }
 }
 
 #[cfg(test)]
@@ -218,6 +244,19 @@ mod tests {
         assert!(b.would_conflict(8, 0, 5)); // same col
         assert!(b.would_conflict(1, 1, 5)); // same box
         assert!(!b.would_conflict(4, 4, 5)); // unrelated
+    }
+
+    #[test]
+    fn missing_digits_per_unit() {
+        let mut b = Board::new();
+        for c in 0..8 {
+            b.set_value(0, c, (c + 1) as u8); // row 0 holds 1..=8
+        }
+        assert_eq!(b.missing_in_row(0), vec![9]);
+        // Column 0 only has the 1 from above.
+        assert_eq!(b.missing_in_col(0), vec![2, 3, 4, 5, 6, 7, 8, 9]);
+        // Top-left box has 1, 2, 3 (cols 0..3 of row 0).
+        assert_eq!(b.missing_in_box(1, 1), vec![4, 5, 6, 7, 8, 9]);
     }
 
     #[test]
