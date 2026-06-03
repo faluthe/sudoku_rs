@@ -14,6 +14,9 @@ A terminal Sudoku with vim-style navigation, built with [ratatui](https://ratatu
 - Pencil-mark notes shown at fixed positions within each cell.
 - A running count of how many of each digit 1–9 remain to be placed.
 - A difficulty selector menu, undo / redo, hints, and a running timer.
+- A responsive layout: the board scales to the terminal size (and the side
+  panel hides when the window is too narrow). Pencil-mark notes are shown when
+  the window is tall enough for full-size cells.
 
 ## Running
 

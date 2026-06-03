@@ -11,12 +11,43 @@ use ratatui::{
     Frame,
 };
 
-// Each cell is 5 columns wide and 3 rows tall; with the surrounding gridlines
-// the whole board is 55 columns by 37 rows.
-const CELL_W: usize = 5;
-const BOARD_W: u16 = (9 * CELL_W + 10) as u16; // 55
-const BOARD_H: u16 = (9 * 3 + 10) as u16; // 37
+// Width of the info panel beside the board.
 const INFO_W: u16 = 28;
+
+/// Cell dimensions are chosen at draw time to fit the terminal. A cell is at
+/// most 5x3 (which fits a full 3x3 pencil-mark grid) and at least 3x1.
+struct CellSize {
+    w: usize,
+    h: usize,
+}
+
+impl CellSize {
+    /// Pick the largest cell that lets the 9x9 board (plus its 10 gridlines in
+    /// each direction) fit within `area`.
+    fn fit(area: Rect) -> CellSize {
+        let h = (((area.height as i32 - 10) / 9).clamp(1, 3)) as usize;
+        // Notes need a 3-row cell; otherwise a narrower cell is enough.
+        let preferred_w = if h == 3 { 5 } else { 3 };
+        let max_w = (((area.width as i32 - 10) / 9).clamp(3, 7)) as usize;
+        CellSize {
+            w: preferred_w.min(max_w),
+            h,
+        }
+    }
+
+    fn board_w(&self) -> u16 {
+        (9 * self.w + 10) as u16
+    }
+
+    fn board_h(&self) -> u16 {
+        (9 * self.h + 10) as u16
+    }
+
+    /// Whether cells are tall enough to display pencil-mark notes.
+    fn shows_notes(&self) -> bool {
+        self.h >= 3
+    }
+}
 
 // Palette.
 const BORDER: Color = Color::Rgb(110, 110, 120);
@@ -32,19 +63,30 @@ const BG_CONFLICT: Color = Color::Rgb(90, 40, 45);
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.size();
     let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
+    let body = rows[0];
 
-    // Center the board + info panel as a tight group within the body.
-    let content_w = BOARD_W + 2 + INFO_W;
-    let content = centered_rect(content_w, BOARD_H, rows[0]);
-    let cols = Layout::horizontal([
-        Constraint::Length(BOARD_W),
-        Constraint::Length(2),
-        Constraint::Length(INFO_W),
-    ])
-    .split(content);
+    // Size cells to the available space so the board never overflows.
+    let cell = CellSize::fit(body);
+    let board_w = cell.board_w();
+    let board_h = cell.board_h();
 
-    draw_board(f, app, cols[0]);
-    draw_info(f, app, cols[2]);
+    // Show the info panel only when there's horizontal room for it.
+    let show_panel = body.width >= board_w + 2 + INFO_W;
+    let content_w = if show_panel { board_w + 2 + INFO_W } else { board_w };
+    let content = centered_rect(content_w, board_h, body);
+
+    if show_panel {
+        let cols = Layout::horizontal([
+            Constraint::Length(board_w),
+            Constraint::Length(2),
+            Constraint::Length(INFO_W),
+        ])
+        .split(content);
+        draw_board(f, app, cols[0], &cell);
+        draw_info(f, app, cols[2]);
+    } else {
+        draw_board(f, app, content, &cell);
+    }
     draw_status_bar(f, app, rows[1]);
 
     if app.show_help {
@@ -105,13 +147,13 @@ fn junction(hi: usize, vi: usize) -> char {
 }
 
 /// Build the horizontal gridline for horizontal-line index `hi`.
-fn border_line(hi: usize) -> Line<'static> {
+fn border_line(hi: usize, cw: usize) -> Line<'static> {
     let seg = if hi % 3 == 0 { '━' } else { '─' };
-    let mut s = String::with_capacity(BOARD_W as usize);
+    let mut s = String::with_capacity(9 * cw + 10);
     for vi in 0..=9 {
         s.push(junction(hi, vi));
         if vi < 9 {
-            for _ in 0..CELL_W {
+            for _ in 0..cw {
                 s.push(seg);
             }
         }
@@ -119,24 +161,26 @@ fn border_line(hi: usize) -> Line<'static> {
     Line::from(Span::styled(s, Style::default().fg(BORDER)))
 }
 
-/// The five glyphs for sub-row `sub` (0..3) of a cell: a centered value, or the
-/// pencil marks at their fixed positions, or blanks.
-fn cell_glyphs(cell: &Cell, sub: usize) -> [char; CELL_W] {
-    let mut out = [' '; CELL_W];
+/// The `cw` glyphs for sub-row `sub` of a cell: a centered value, or (only in
+/// tall cells) the pencil marks at their fixed positions, or blanks.
+fn cell_glyphs(cell: &Cell, size: &CellSize, sub: usize) -> String {
+    let mut out = vec![' '; size.w];
     if let Some(v) = cell.value {
-        if sub == 1 {
-            out[2] = (b'0' + v) as char;
+        if sub == size.h / 2 {
+            out[size.w / 2] = (b'0' + v) as char;
         }
-        return out;
-    }
-    // Notes 1-3 / 4-6 / 7-9 sit at columns 0, 2, 4 of their row.
-    for k in 0..3 {
-        let n = (sub * 3 + k + 1) as u8;
-        if cell.has_note(n) {
-            out[k * 2] = (b'0' + n) as char;
+    } else if size.shows_notes() {
+        // Notes 1-3 / 4-6 / 7-9 sit on rows 0/1/2; spread across the width when
+        // there's room, otherwise packed to the left.
+        let cols: [usize; 3] = if size.w >= 5 { [0, 2, 4] } else { [0, 1, 2] };
+        for k in 0..3 {
+            let n = (sub * 3 + k + 1) as u8;
+            if cell.has_note(n) {
+                out[cols[k]] = (b'0' + n) as char;
+            }
         }
     }
-    out
+    out.into_iter().collect()
 }
 
 /// Background color for a cell given the cursor and game state.
@@ -159,27 +203,27 @@ fn cell_bg(app: &App, r: usize, c: usize) -> Option<Color> {
     None
 }
 
-fn draw_board(f: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = Vec::with_capacity(BOARD_H as usize);
+fn draw_board(f: &mut Frame, app: &App, area: Rect, size: &CellSize) {
+    let mut lines: Vec<Line> = Vec::with_capacity(size.board_h() as usize);
     for r in 0..9 {
-        lines.push(border_line(r));
-        for sub in 0..3 {
-            lines.push(content_line(app, r, sub));
+        lines.push(border_line(r, size.w));
+        for sub in 0..size.h {
+            lines.push(content_line(app, r, sub, size));
         }
     }
-    lines.push(border_line(9));
+    lines.push(border_line(9, size.w));
     f.render_widget(Paragraph::new(lines).alignment(Alignment::Left), area);
 }
 
-/// One text row (`sub` of 0..3) across all nine cells of board-row `r`.
-fn content_line(app: &App, r: usize, sub: usize) -> Line<'static> {
+/// One text row (`sub` of 0..size.h) across all nine cells of board-row `r`.
+fn content_line(app: &App, r: usize, sub: usize, size: &CellSize) -> Line<'static> {
     let mut spans: Vec<Span> = Vec::with_capacity(19);
     for c in 0..9 {
         let sep = if c % 3 == 0 { '┃' } else { '│' };
         spans.push(Span::styled(sep.to_string(), Style::default().fg(BORDER)));
 
         let cell = app.board.cell(r, c);
-        let glyphs: String = cell_glyphs(cell, sub).iter().collect();
+        let glyphs = cell_glyphs(cell, size, sub);
 
         let fg = if cell.value.is_some() {
             if app.board.has_conflict(r, c) || app.is_wrong(r, c) {

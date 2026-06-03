@@ -181,4 +181,13 @@ mod render_test {
         // Smaller than the board; must clip rather than panic.
         let _ = rendered(&app, 40, 20);
     }
+
+    #[test]
+    fn board_fits_short_terminal() {
+        let app = App::new(Difficulty::Easy);
+        // A height that can't hold the full 37-row board. The board should
+        // shrink to fit, so its bottom corners must still be drawn.
+        let screen = rendered(&app, 100, 24);
+        assert!(screen.contains('┗') && screen.contains('┛'));
+    }
 }
