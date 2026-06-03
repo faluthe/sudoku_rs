@@ -79,6 +79,7 @@ const USER: Color = Color::Rgb(120, 200, 255);
 const NOTE: Color = Color::Rgb(130, 130, 140);
 const WRONG: Color = Color::Rgb(240, 90, 90);
 const BG_SELECT: Color = Color::Rgb(60, 90, 140);
+const BG_SELECT_NOTE: Color = Color::Rgb(120, 100, 50);
 const BG_PEER: Color = Color::Rgb(40, 42, 54);
 const BG_SAME: Color = Color::Rgb(70, 68, 40);
 const BG_CONFLICT: Color = Color::Rgb(90, 40, 45);
@@ -221,7 +222,10 @@ fn cell_glyphs(cell: &Cell, size: &CellSize, sub: usize) -> String {
 fn cell_bg(app: &App, r: usize, c: usize) -> Option<Color> {
     let (cr, cc) = app.cursor;
     if (r, c) == (cr, cc) {
-        return Some(BG_SELECT);
+        return Some(match app.mode {
+            Mode::Note => BG_SELECT_NOTE,
+            _ => BG_SELECT,
+        });
     }
     if app.board.has_conflict(r, c) || app.is_wrong(r, c) {
         return Some(BG_CONFLICT);
