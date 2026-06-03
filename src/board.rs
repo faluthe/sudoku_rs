@@ -22,6 +22,11 @@ impl Cell {
         self.notes ^= 1 << (n - 1);
     }
 
+    pub fn remove_note(&mut self, n: u8) {
+        debug_assert!((1..=9).contains(&n));
+        self.notes &= !(1 << (n - 1));
+    }
+
     pub fn clear_notes(&mut self) {
         self.notes = 0;
     }
