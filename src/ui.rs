@@ -378,7 +378,8 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let hint = "hjkl move  1-9 set  m note  x clear  u undo  H hint  d difficulty  ? help  q quit";
+    let hint =
+        "hjkl move  1-9 set  f find  m note  x clear  u undo  H hint  d difficulty  ? help  q quit";
     let text = if app.status.is_empty() {
         hint.to_string()
     } else {
@@ -434,6 +435,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         Line::from("  w b          jump box right / left"),
         Line::from("  0 $          start / end of row"),
         Line::from("  g g  /  G     top / bottom"),
+        Line::from("  f 1-9        jump to nearest of that number"),
         Line::from("  1-9          place value (or toggle note)"),
         Line::from("  m            toggle note mode"),
         Line::from("  x  /  Del     clear cell"),

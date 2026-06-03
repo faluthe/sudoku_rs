@@ -32,6 +32,7 @@ cargo run --release
 | `w` / `b`      | Jump one 3×3 box right / left       |
 | `0` / `$`      | Jump to start / end of row          |
 | `gg` / `G`     | Jump to top / bottom row            |
+| `f` `1`–`9`    | Jump to the nearest cell with that number |
 | `1`–`9`        | Place a value (or toggle a note)    |
 | `m`            | Toggle note mode                    |
 | `x` / `Del`    | Clear the current cell              |

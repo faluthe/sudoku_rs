@@ -111,6 +111,29 @@ impl App {
         self.cursor.0 = 8;
     }
 
+    /// Jump to the cell holding `value` that is nearest the cursor (by
+    /// Manhattan distance), excluding the current cell. Ties favor the
+    /// top-left-most match. Sets a status message if no such value is placed.
+    pub fn find_nearest(&mut self, value: u8) {
+        let (cr, cc) = self.cursor;
+        let mut best: Option<(usize, (usize, usize))> = None;
+        for r in 0..9 {
+            for c in 0..9 {
+                if (r, c) == (cr, cc) || self.board.value(r, c) != Some(value) {
+                    continue;
+                }
+                let dist = cr.abs_diff(r) + cc.abs_diff(c);
+                if best.map_or(true, |(bd, _)| dist < bd) {
+                    best = Some((dist, (r, c)));
+                }
+            }
+        }
+        match best {
+            Some((_, pos)) => self.cursor = pos,
+            None => self.status = format!("No {} on the board", value),
+        }
+    }
+
     /// Jump to the next 3x3 box boundary in a direction (vim `w`/`b` feel).
     pub fn move_box(&mut self, dir: Direction) {
         let (r, c) = self.cursor;
@@ -360,6 +383,28 @@ mod tests {
         assert_eq!(a.board.value(er, ec), None);
         a.redo();
         assert_eq!(a.board.value(er, ec), Some(5));
+    }
+
+    #[test]
+    fn find_nearest_jumps_to_closest() {
+        let mut a = app();
+        // Clear any givens so we control the board, then plant two 7s.
+        a.board = crate::board::Board::new();
+        a.board.set_value(0, 5, 7);
+        a.board.set_value(8, 8, 7);
+        a.cursor = (0, 0);
+        a.find_nearest(7);
+        assert_eq!(a.cursor, (0, 5)); // closer of the two
+
+        a.cursor = (8, 7);
+        a.find_nearest(7);
+        assert_eq!(a.cursor, (8, 8));
+
+        // No 3 anywhere: cursor stays put, status set.
+        a.cursor = (4, 4);
+        a.find_nearest(3);
+        assert_eq!(a.cursor, (4, 4));
+        assert!(!a.status.is_empty());
     }
 
     #[test]

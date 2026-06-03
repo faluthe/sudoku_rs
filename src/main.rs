@@ -47,8 +47,8 @@ fn restore_terminal(terminal: &mut Tui) -> io::Result<()> {
 
 fn run(terminal: &mut Tui) -> io::Result<()> {
     let mut app = App::new(Difficulty::Easy);
-    // Tracks a pending `g` for the `gg` motion.
-    let mut pending_g = false;
+    // Pending prefixes for the `gg` motion and the `f<digit>` find motion.
+    let mut pending = Pending::default();
 
     while !app.should_quit {
         terminal.draw(|f| ui::draw(f, &app))?;
@@ -57,7 +57,7 @@ fn run(terminal: &mut Tui) -> io::Result<()> {
         if event::poll(Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    handle_key(&mut app, key, &mut pending_g);
+                    handle_key(&mut app, key, &mut pending);
                 }
             }
         }
@@ -65,7 +65,16 @@ fn run(terminal: &mut Tui) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_key(app: &mut App, key: KeyEvent, pending_g: &mut bool) {
+/// Tracks multi-key motions awaiting their second keypress.
+#[derive(Default)]
+struct Pending {
+    /// A `g` was pressed; the next `g` jumps to the top.
+    g: bool,
+    /// An `f` was pressed; the next digit jumps to the nearest cell with it.
+    find: bool,
+}
+
+fn handle_key(app: &mut App, key: KeyEvent, pending: &mut Pending) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     app.status.clear();
 
@@ -85,9 +94,18 @@ fn handle_key(app: &mut App, key: KeyEvent, pending_g: &mut bool) {
         return;
     }
 
+    // Resolve a pending `f` prefix: `f<digit>` jumps to the nearest match.
+    if pending.find {
+        pending.find = false;
+        if let KeyCode::Char(c @ '1'..='9') = key.code {
+            app.find_nearest(c as u8 - b'0');
+        }
+        return;
+    }
+
     // Resolve a pending `g` prefix: `gg` jumps to the top row.
-    if *pending_g {
-        *pending_g = false;
+    if pending.g {
+        pending.g = false;
         if let KeyCode::Char('g') = key.code {
             app.move_top();
             return;
@@ -114,8 +132,9 @@ fn handle_key(app: &mut App, key: KeyEvent, pending_g: &mut bool) {
         KeyCode::Char('b') => app.move_box(Direction::Left),
         KeyCode::Char('0') => app.move_row_start(),
         KeyCode::Char('$') => app.move_row_end(),
-        KeyCode::Char('g') => *pending_g = true,
+        KeyCode::Char('g') => pending.g = true,
         KeyCode::Char('G') => app.move_bottom(),
+        KeyCode::Char('f') => pending.find = true,
 
         // Editing.
         KeyCode::Char(c @ '1'..='9') => app.input_digit(c as u8 - b'0'),
