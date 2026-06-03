@@ -18,6 +18,24 @@ pub enum Difficulty {
 }
 
 impl Difficulty {
+    /// All difficulties, in ascending order.
+    pub const ALL: [Difficulty; 4] = [
+        Difficulty::Easy,
+        Difficulty::Medium,
+        Difficulty::Hard,
+        Difficulty::Expert,
+    ];
+
+    /// This difficulty's position within [`Difficulty::ALL`].
+    pub fn index(self) -> usize {
+        match self {
+            Difficulty::Easy => 0,
+            Difficulty::Medium => 1,
+            Difficulty::Hard => 2,
+            Difficulty::Expert => 3,
+        }
+    }
+
     /// How many clues to aim to leave on the board.
     fn target_clues(self) -> usize {
         match self {

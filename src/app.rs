@@ -32,6 +32,10 @@ pub struct App {
     pub check_errors: bool,
     pub status: String,
     pub show_help: bool,
+    /// Whether the difficulty-selection menu is open.
+    pub difficulty_menu: bool,
+    /// Highlighted entry within the difficulty menu.
+    pub menu_index: usize,
     pub should_quit: bool,
     won: bool,
     start: Instant,
@@ -53,6 +57,8 @@ impl App {
             check_errors: false,
             status: String::new(),
             show_help: false,
+            difficulty_menu: false,
+            menu_index: difficulty.index(),
             should_quit: false,
             won: false,
             start: Instant::now(),
@@ -123,6 +129,36 @@ impl App {
             Mode::Normal => Mode::Note,
             Mode::Note => Mode::Normal,
         };
+    }
+
+    // --- Difficulty menu ----------------------------------------------------
+
+    pub fn open_difficulty_menu(&mut self) {
+        self.difficulty_menu = true;
+        self.menu_index = self.difficulty.index();
+    }
+
+    pub fn close_difficulty_menu(&mut self) {
+        self.difficulty_menu = false;
+    }
+
+    /// Move the menu highlight by `delta`, wrapping around.
+    pub fn menu_move(&mut self, delta: i32) {
+        let len = Difficulty::ALL.len() as i32;
+        self.menu_index = (self.menu_index as i32 + delta).rem_euclid(len) as usize;
+    }
+
+    /// Jump the menu highlight to a specific entry.
+    pub fn menu_select(&mut self, index: usize) {
+        if index < Difficulty::ALL.len() {
+            self.menu_index = index;
+        }
+    }
+
+    /// Start a new game at the highlighted difficulty and close the menu.
+    pub fn menu_confirm(&mut self) {
+        let difficulty = Difficulty::ALL[self.menu_index];
+        self.new_game(difficulty);
     }
 
     /// Snapshot the board onto the undo stack and clear the redo stack.

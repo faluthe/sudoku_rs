@@ -12,7 +12,8 @@ A terminal Sudoku with vim-style navigation, built with [ratatui](https://ratatu
 - Conflict highlighting, and an optional error-check mode that flags entries
   disagreeing with the solution.
 - Pencil-mark notes shown at fixed positions within each cell.
-- Undo / redo, hints, and a running timer.
+- A running count of how many of each digit 1–9 remain to be placed.
+- A difficulty selector menu, undo / redo, hints, and a running timer.
 
 ## Running
 
@@ -34,6 +35,7 @@ cargo run --release
 | `u` / `Ctrl-r` | Undo / redo                         |
 | `H`            | Reveal the current cell (hint)      |
 | `c`            | Toggle error checking               |
+| `d`            | Open the difficulty selector        |
 | `n` / `N`      | New game / cycle difficulty         |
 | `?`            | Toggle the help popup               |
 | `q`            | Quit                                |

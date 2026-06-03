@@ -2,6 +2,7 @@
 
 use crate::app::{App, Mode};
 use crate::board::Cell;
+use crate::generator::Difficulty;
 use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -9,6 +10,13 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+
+// Each cell is 5 columns wide and 3 rows tall; with the surrounding gridlines
+// the whole board is 55 columns by 37 rows.
+const CELL_W: usize = 5;
+const BOARD_W: u16 = (9 * CELL_W + 10) as u16; // 55
+const BOARD_H: u16 = (9 * 3 + 10) as u16; // 37
+const INFO_W: u16 = 28;
 
 // Palette.
 const BORDER: Color = Color::Rgb(110, 110, 120);
@@ -24,22 +32,34 @@ const BG_CONFLICT: Color = Color::Rgb(90, 40, 45);
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.size();
     let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
-    let cols = Layout::horizontal([Constraint::Length(37), Constraint::Min(22)]).split(rows[0]);
+
+    // Center the board + info panel as a tight group within the body.
+    let content_w = BOARD_W + 2 + INFO_W;
+    let content = centered_rect(content_w, BOARD_H, rows[0]);
+    let cols = Layout::horizontal([
+        Constraint::Length(BOARD_W),
+        Constraint::Length(2),
+        Constraint::Length(INFO_W),
+    ])
+    .split(content);
 
     draw_board(f, app, cols[0]);
-    draw_info(f, app, cols[1]);
+    draw_info(f, app, cols[2]);
     draw_status_bar(f, app, rows[1]);
 
     if app.show_help {
         draw_help(f, area);
     }
+    if app.difficulty_menu {
+        draw_difficulty_menu(f, app, area);
+    }
 }
 
-/// The character to draw at the intersection of box-border row `hi` (0..=9) and
-/// vertical line `vi` (0..=9). Horizontal box lines are always heavy; vertical
-/// lines are heavy on box boundaries (every 3rd) and light otherwise.
+/// The character at the intersection of horizontal line `hi` and vertical line
+/// `vi` (both 0..=9). Lines on a 3-boundary are heavy; the rest are light.
 fn junction(hi: usize, vi: usize) -> char {
-    let vert_heavy = vi % 3 == 0;
+    let hh = hi % 3 == 0; // horizontal line heavy?
+    let vh = vi % 3 == 0; // vertical line heavy?
     let (north, south, west, east) = (hi > 0, hi < 9, vi > 0, vi < 9);
     match (north, south, west, east) {
         (false, true, false, true) => '┏',
@@ -47,58 +67,73 @@ fn junction(hi: usize, vi: usize) -> char {
         (true, false, false, true) => '┗',
         (true, false, true, false) => '┛',
         (false, true, true, true) => {
-            if vert_heavy {
+            if vh {
                 '┳'
             } else {
                 '┯'
             }
         }
         (true, false, true, true) => {
-            if vert_heavy {
+            if vh {
                 '┻'
             } else {
                 '┷'
             }
         }
-        (true, true, false, true) => '┣',
-        (true, true, true, false) => '┫',
-        (true, true, true, true) => {
-            if vert_heavy {
-                '╋'
+        (true, true, false, true) => {
+            if hh {
+                '┣'
             } else {
-                '┿'
+                '┠'
             }
         }
+        (true, true, true, false) => {
+            if hh {
+                '┫'
+            } else {
+                '┨'
+            }
+        }
+        (true, true, true, true) => match (vh, hh) {
+            (false, false) => '┼',
+            (false, true) => '┿',
+            (true, false) => '╂',
+            (true, true) => '╋',
+        },
         _ => ' ',
     }
 }
 
-/// Build a heavy horizontal box-border line for horizontal-line index `hi`.
+/// Build the horizontal gridline for horizontal-line index `hi`.
 fn border_line(hi: usize) -> Line<'static> {
-    let mut s = String::with_capacity(37);
+    let seg = if hi % 3 == 0 { '━' } else { '─' };
+    let mut s = String::with_capacity(BOARD_W as usize);
     for vi in 0..=9 {
         s.push(junction(hi, vi));
         if vi < 9 {
-            s.push_str("━━━");
+            for _ in 0..CELL_W {
+                s.push(seg);
+            }
         }
     }
     Line::from(Span::styled(s, Style::default().fg(BORDER)))
 }
 
-/// The three glyphs for sub-row `sub` (0..3) of a cell: a centered value, or the
+/// The five glyphs for sub-row `sub` (0..3) of a cell: a centered value, or the
 /// pencil marks at their fixed positions, or blanks.
-fn cell_glyphs(cell: &Cell, sub: usize) -> [char; 3] {
+fn cell_glyphs(cell: &Cell, sub: usize) -> [char; CELL_W] {
+    let mut out = [' '; CELL_W];
     if let Some(v) = cell.value {
         if sub == 1 {
-            return [' ', (b'0' + v) as char, ' '];
+            out[2] = (b'0' + v) as char;
         }
-        return [' ', ' ', ' '];
+        return out;
     }
-    let mut out = [' '; 3];
+    // Notes 1-3 / 4-6 / 7-9 sit at columns 0, 2, 4 of their row.
     for k in 0..3 {
         let n = (sub * 3 + k + 1) as u8;
         if cell.has_note(n) {
-            out[k] = (b'0' + n) as char;
+            out[k * 2] = (b'0' + n) as char;
         }
     }
     out
@@ -125,28 +160,21 @@ fn cell_bg(app: &App, r: usize, c: usize) -> Option<Color> {
 }
 
 fn draw_board(f: &mut Frame, app: &App, area: Rect) {
-    let mut lines: Vec<Line> = Vec::with_capacity(31);
-
-    for box_row in 0..3 {
-        lines.push(border_line(box_row * 3));
-        for inner in 0..3 {
-            let r = box_row * 3 + inner;
-            for sub in 0..3 {
-                lines.push(content_line(app, r, sub));
-            }
+    let mut lines: Vec<Line> = Vec::with_capacity(BOARD_H as usize);
+    for r in 0..9 {
+        lines.push(border_line(r));
+        for sub in 0..3 {
+            lines.push(content_line(app, r, sub));
         }
     }
     lines.push(border_line(9));
-
-    let para = Paragraph::new(lines).alignment(Alignment::Left);
-    f.render_widget(para, area);
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Left), area);
 }
 
 /// One text row (`sub` of 0..3) across all nine cells of board-row `r`.
 fn content_line(app: &App, r: usize, sub: usize) -> Line<'static> {
     let mut spans: Vec<Span> = Vec::with_capacity(19);
     for c in 0..9 {
-        // Vertical separator to the left of this cell.
         let sep = if c % 3 == 0 { '┃' } else { '│' };
         spans.push(Span::styled(sep.to_string(), Style::default().fg(BORDER)));
 
@@ -185,19 +213,14 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
     };
     let secs = app.elapsed().as_secs();
     let timer = format!("{:02}:{:02}", secs / 60, secs % 60);
+    let label = |s: &str| Span::styled(format!("{:<11}", s), Style::default().fg(Color::Gray));
 
     let mut lines = vec![
+        Line::from(vec![label("Difficulty"), Span::raw(app.difficulty.label())]),
+        Line::from(vec![label("Mode"), mode]),
+        Line::from(vec![label("Time"), Span::raw(timer)]),
         Line::from(vec![
-            Span::styled("Difficulty  ", Style::default().fg(Color::Gray)),
-            Span::raw(app.difficulty.label()),
-        ]),
-        Line::from(vec![Span::styled("Mode        ", Style::default().fg(Color::Gray)), mode]),
-        Line::from(vec![
-            Span::styled("Time        ", Style::default().fg(Color::Gray)),
-            Span::raw(timer),
-        ]),
-        Line::from(vec![
-            Span::styled("Remaining   ", Style::default().fg(Color::Gray)),
+            label("Remaining"),
             Span::raw(app.board.empty_count().to_string()),
         ]),
     ];
@@ -207,6 +230,35 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(WRONG),
         )));
     }
+
+    // How many of each digit are still to be placed.
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Numbers left",
+        Style::default().fg(Color::Gray),
+    )));
+    for row in 0..3 {
+        let mut spans = Vec::with_capacity(3);
+        for col in 0..3 {
+            let n = (row * 3 + col + 1) as u8;
+            let left = 9 - app.board.count_value(n);
+            let style = if left == 0 {
+                Style::default()
+                    .fg(Color::Rgb(90, 140, 90))
+                    .add_modifier(Modifier::DIM)
+            } else {
+                Style::default().fg(Color::Rgb(200, 200, 210))
+            };
+            let text = if left == 0 {
+                format!(" {}:✓ ", n)
+            } else {
+                format!(" {}:{} ", n, left)
+            };
+            spans.push(Span::styled(text, style));
+        }
+        lines.push(Line::from(spans));
+    }
+
     if app.is_won() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -223,7 +275,7 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
-    let hint = "hjkl move  1-9 set  m note  x clear  u undo  H hint  ? help  q quit";
+    let hint = "hjkl move  1-9 set  m note  x clear  u undo  H hint  d difficulty  ? help  q quit";
     let text = if app.status.is_empty() {
         hint.to_string()
     } else {
@@ -234,6 +286,38 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::Rgb(160, 160, 170)),
     )));
     f.render_widget(para, area);
+}
+
+fn draw_difficulty_menu(f: &mut Frame, app: &App, area: Rect) {
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Select difficulty",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    for (i, d) in Difficulty::ALL.iter().enumerate() {
+        let selected = i == app.menu_index;
+        let text = format!(" {} {}. {} ", if selected { '>' } else { ' ' }, i + 1, d.label());
+        let style = if selected {
+            Style::default().fg(Color::Black).bg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "j/k move  1-4 pick  Enter ok  Esc cancel",
+        Style::default().fg(Color::Gray),
+    )));
+
+    let popup = centered_rect(44, 10, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    f.render_widget(Clear, popup);
+    f.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 fn draw_help(f: &mut Frame, area: Rect) {
@@ -253,11 +337,12 @@ fn draw_help(f: &mut Frame, area: Rect) {
         Line::from("  u  /  Ctrl-r  undo / redo"),
         Line::from("  H            reveal current cell (hint)"),
         Line::from("  c            toggle error checking"),
+        Line::from("  d            choose difficulty"),
         Line::from("  n  /  N       new game / cycle difficulty"),
         Line::from("  ?            toggle this help"),
         Line::from("  q            quit"),
     ];
-    let popup = centered_rect(46, 19, area);
+    let popup = centered_rect(46, 20, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));

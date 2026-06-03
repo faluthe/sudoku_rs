@@ -69,6 +69,22 @@ fn handle_key(app: &mut App, key: KeyEvent, pending_g: &mut bool) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     app.status.clear();
 
+    // The difficulty menu is modal: it swallows all input while open.
+    if app.difficulty_menu {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('d') | KeyCode::Char('q') => app.close_difficulty_menu(),
+            KeyCode::Char('j') | KeyCode::Down => app.menu_move(1),
+            KeyCode::Char('k') | KeyCode::Up => app.menu_move(-1),
+            KeyCode::Enter | KeyCode::Char('l') => app.menu_confirm(),
+            KeyCode::Char(c @ '1'..='4') => {
+                app.menu_select((c as u8 - b'1') as usize);
+                app.menu_confirm();
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Resolve a pending `g` prefix: `gg` jumps to the top row.
     if *pending_g {
         *pending_g = false;
@@ -111,6 +127,7 @@ fn handle_key(app: &mut App, key: KeyEvent, pending_g: &mut bool) {
         // Assists.
         KeyCode::Char('H') => app.hint(),
         KeyCode::Char('c') => app.toggle_check(),
+        KeyCode::Char('d') => app.open_difficulty_menu(),
 
         // Game control.
         KeyCode::Char('n') => {
@@ -123,5 +140,45 @@ fn handle_key(app: &mut App, key: KeyEvent, pending_g: &mut bool) {
         }
 
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod render_test {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    fn rendered(app: &App, w: u16, h: u16) -> String {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| ui::draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                out.push_str(buf.get(x, y).symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn renders_board_and_panel() {
+        let app = App::new(Difficulty::Easy);
+        let screen = rendered(&app, 90, 40);
+        // Heavy outer corners of the 3x3 box grid.
+        assert!(screen.contains('┏') && screen.contains('┛'));
+        // A heavy/light junction that only the full gridline produces.
+        assert!(screen.contains('╋'));
+        assert!(screen.contains("Numbers left"));
+        assert!(screen.contains("Difficulty"));
+    }
+
+    #[test]
+    fn renders_on_small_terminal_without_panic() {
+        let app = App::new(Difficulty::Easy);
+        // Smaller than the board; must clip rather than panic.
+        let _ = rendered(&app, 40, 20);
     }
 }

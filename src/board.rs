@@ -168,6 +168,11 @@ impl Board {
     pub fn empty_count(&self) -> usize {
         self.cells.iter().filter(|c| c.value.is_none()).count()
     }
+
+    /// How many cells currently hold the value `v`.
+    pub fn count_value(&self, v: u8) -> usize {
+        self.cells.iter().filter(|c| c.value == Some(v)).count()
+    }
 }
 
 #[cfg(test)]
