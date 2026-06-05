@@ -53,8 +53,15 @@ fn run(terminal: &mut Tui) -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|f| ui::draw(f, &app))?;
 
+        // While the win animation plays, redraw at ~30fps for a smooth sweep;
+        // otherwise poll lazily, just often enough to keep the timer ticking.
+        let tick = if app.is_won() {
+            Duration::from_millis(33)
+        } else {
+            Duration::from_millis(250)
+        };
         // Poll so the on-screen timer keeps ticking without input.
-        if event::poll(Duration::from_millis(250))? {
+        if event::poll(tick)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     handle_key(&mut app, key, &mut pending);
@@ -208,6 +215,25 @@ mod render_test {
         // shrink to fit, so its bottom corners must still be drawn.
         let screen = rendered(&app, 100, 24);
         assert!(screen.contains('┗') && screen.contains('┛'));
+    }
+
+    #[test]
+    fn win_banner_appears_after_solving() {
+        let mut app = App::new(Difficulty::Easy);
+        // Reveal every cell to solve the board and start the win animation.
+        for r in 0..9 {
+            for c in 0..9 {
+                if app.board.value(r, c).is_none() {
+                    app.cursor = (r, c);
+                    app.hint();
+                }
+            }
+        }
+        assert!(app.is_won());
+        // Wait past the banner's pop-in delay, then it should be on screen.
+        std::thread::sleep(Duration::from_millis(900));
+        let screen = rendered(&app, 90, 40);
+        assert!(screen.contains("S O L V E D"));
     }
 
     #[test]

@@ -84,6 +84,40 @@ const BG_PEER: Color = Color::Rgb(40, 42, 54);
 const BG_SAME: Color = Color::Rgb(70, 68, 40);
 const BG_CONFLICT: Color = Color::Rgb(90, 40, 45);
 
+/// Convert HSV (hue in degrees, sat/val in 0..=1) to an RGB terminal color.
+/// Used by the win animation's flowing rainbow.
+fn hsv(h: f32, s: f32, v: f32) -> Color {
+    let h = h.rem_euclid(360.0);
+    let c = v * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    Color::Rgb(
+        ((r + m) * 255.0) as u8,
+        ((g + m) * 255.0) as u8,
+        ((b + m) * 255.0) as u8,
+    )
+}
+
+/// The win animation's background tint for cell (r, c) at time `t` seconds since
+/// solving: a rainbow that flows along the board's diagonal, lit by a bright
+/// band that sweeps across it on a loop.
+fn win_cell_bg(r: usize, c: usize, t: f32) -> Color {
+    let diag = (r + c) as f32; // 0..=16, constant along anti-diagonals
+    let hue = diag * 22.0 + t * 130.0;
+    // A bright band sweeps the diagonal (0..16) then gaps before repeating.
+    let front = (t * 7.0).rem_euclid(26.0) - 5.0;
+    let pulse = (1.0 - (diag - front).abs() / 3.0).clamp(0.0, 1.0);
+    hsv(hue, 0.85, 0.26 + 0.55 * pulse)
+}
+
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.size();
     let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
@@ -113,6 +147,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
     draw_status_bar(f, app, rows[1]);
 
+    if let Some(elapsed) = app.win_anim_elapsed() {
+        draw_win_banner(f, app, body, elapsed.as_secs_f32());
+    }
     if app.show_help {
         draw_help(f, area);
     }
@@ -220,6 +257,10 @@ fn cell_glyphs(cell: &Cell, size: &CellSize, sub: usize) -> String {
 
 /// Background color for a cell given the cursor and game state.
 fn cell_bg(app: &App, r: usize, c: usize) -> Option<Color> {
+    // The win animation washes over every cell, replacing the usual highlights.
+    if let Some(elapsed) = app.win_anim_elapsed() {
+        return Some(win_cell_bg(r, c, elapsed.as_secs_f32()));
+    }
     let (cr, cc) = app.cursor;
     if (r, c) == (cr, cc) {
         return Some(match app.mode {
@@ -279,11 +320,19 @@ fn content_line(app: &App, r: usize, sub: usize, size: &CellSize) -> Line<'stati
             NOTE
         };
 
+        // During the win sweep, force bold white digits so they stay crisp over
+        // the shifting rainbow rather than blending into it.
+        let fg = if app.is_won() && cell.value.is_some() {
+            Color::Rgb(255, 255, 255)
+        } else {
+            fg
+        };
+
         let mut style = Style::default().fg(fg);
         if let Some(bg) = cell_bg(app, r, c) {
             style = style.bg(bg);
         }
-        if cell.given && cell.value.is_some() {
+        if (cell.given || app.is_won()) && cell.value.is_some() {
             style = style.add_modifier(Modifier::BOLD);
         }
         spans.push(Span::styled(glyphs, style));
@@ -394,6 +443,64 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::Rgb(160, 160, 170)),
     )));
     f.render_widget(para, area);
+}
+
+/// A celebratory banner that pops in over the board once the puzzle is solved.
+/// `t` is seconds since solving; the banner waits for the sweep to wash over the
+/// board, then grows into place with a rainbow border that keeps cycling.
+fn draw_win_banner(f: &mut Frame, app: &App, area: Rect, t: f32) {
+    const DELAY: f32 = 0.45; // let the rainbow sweep land first
+    const GROW: f32 = 0.35; // how long the box takes to unfold
+    if t < DELAY {
+        return;
+    }
+
+    // Eased 0..1 progress for the pop-in.
+    let p = ((t - DELAY) / GROW).clamp(0.0, 1.0);
+    let ease = 1.0 - (1.0 - p) * (1.0 - p);
+
+    let secs = app.elapsed().as_secs();
+    let lines = vec![
+        Line::from(Span::styled(
+            "✦  S O L V E D  ✦",
+            Style::default()
+                .fg(Color::Rgb(255, 255, 255))
+                .add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{} in {:02}:{:02}", app.difficulty.label(), secs / 60, secs % 60),
+            Style::default().fg(Color::Rgb(220, 220, 230)),
+        ))
+        .alignment(Alignment::Center),
+        Line::from(Span::styled(
+            "n new game   q quit",
+            Style::default().fg(Color::Rgb(150, 150, 160)),
+        ))
+        .alignment(Alignment::Center),
+    ];
+
+    // Unfold from a sliver to full size as the pop-in eases in.
+    let full_w: u16 = 30;
+    let full_h: u16 = 6;
+    let w = (full_w as f32 * ease).round().max(1.0) as u16;
+    let h = (full_h as f32 * (0.4 + 0.6 * ease)).round().max(1.0) as u16;
+    let popup = centered_rect(w, h, area);
+
+    // Border hue cycles, matching the board's flowing rainbow.
+    let border = hsv(t * 130.0, 0.8, 0.95);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border).add_modifier(Modifier::BOLD));
+    f.render_widget(Clear, popup);
+    // Only spill the text once the box is mostly open, so it doesn't overflow
+    // the sliver mid-unfold.
+    if ease > 0.6 {
+        f.render_widget(Paragraph::new(lines).block(block), popup);
+    } else {
+        f.render_widget(block, popup);
+    }
 }
 
 fn draw_difficulty_menu(f: &mut Frame, app: &App, area: Rect) {

@@ -40,6 +40,8 @@ pub struct App {
     won: bool,
     start: Instant,
     win_elapsed: Option<Duration>,
+    /// When the puzzle was solved, used to drive the win animation.
+    won_at: Option<Instant>,
     undo_stack: Vec<Board>,
     redo_stack: Vec<Board>,
 }
@@ -63,6 +65,7 @@ impl App {
             won: false,
             start: Instant::now(),
             win_elapsed: None,
+            won_at: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -76,6 +79,12 @@ impl App {
 
     pub fn is_won(&self) -> bool {
         self.won
+    }
+
+    /// Time since the puzzle was solved, or `None` if it isn't solved.
+    /// Drives the win animation; the frontend redraws while this is `Some`.
+    pub fn win_anim_elapsed(&self) -> Option<Duration> {
+        self.won_at.map(|t| t.elapsed())
     }
 
     /// Time elapsed, frozen at the moment of winning.
@@ -282,6 +291,7 @@ impl App {
             self.redo_stack.push(std::mem::replace(&mut self.board, prev));
             self.won = false;
             self.win_elapsed = None;
+            self.won_at = None;
         } else {
             self.status = "Nothing to undo".into();
         }
@@ -300,6 +310,7 @@ impl App {
         if !self.won && self.board.is_solved() {
             self.won = true;
             self.win_elapsed = Some(self.start.elapsed());
+            self.won_at = Some(Instant::now());
             self.status = "Solved! Press 'n' for a new game".into();
         }
     }
@@ -405,6 +416,29 @@ mod tests {
         a.find_nearest(3);
         assert_eq!(a.cursor, (4, 4));
         assert!(!a.status.is_empty());
+    }
+
+    #[test]
+    fn solving_arms_the_win_animation() {
+        let mut a = app();
+        assert!(!a.is_won());
+        assert!(a.win_anim_elapsed().is_none());
+        // Reveal every empty cell to force a solved board.
+        for r in 0..9 {
+            for c in 0..9 {
+                if a.board.value(r, c).is_none() {
+                    a.cursor = (r, c);
+                    a.hint();
+                }
+            }
+        }
+        assert!(a.is_won());
+        // The animation clock is running once solved.
+        assert!(a.win_anim_elapsed().is_some());
+        // Undo retreats from the win and disarms the animation.
+        a.undo();
+        assert!(!a.is_won());
+        assert!(a.win_anim_elapsed().is_none());
     }
 
     #[test]
