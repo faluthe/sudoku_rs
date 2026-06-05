@@ -5,7 +5,10 @@ mod ui;
 
 use app::{App, Direction, Mode};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -26,13 +29,15 @@ type Tui = Terminal<CrosstermBackend<Stdout>>;
 fn setup_terminal() -> io::Result<Tui> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    // Bracketed paste lets a pasted puzzle code arrive as one event instead of
+    // a stream of keypresses (whose embedded newline would submit early).
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
 
     // Make sure a panic doesn't leave the user's terminal in raw/alt-screen mode.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
         default_hook(info);
     }));
 
@@ -41,7 +46,7 @@ fn setup_terminal() -> io::Result<Tui> {
 
 fn restore_terminal(terminal: &mut Tui) -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen)?;
     terminal.show_cursor()
 }
 
@@ -65,10 +70,13 @@ fn run(terminal: &mut Tui) -> io::Result<()> {
         };
         // Poll so the on-screen timer keeps ticking without input.
         if event::poll(tick)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     handle_key(&mut app, key, &mut pending);
                 }
+                // Pasted text only matters while entering a puzzle code.
+                Event::Paste(text) => app.code_entry_push(&text),
+                _ => {}
             }
         }
 
@@ -136,6 +144,18 @@ struct Pending {
 fn handle_key(app: &mut App, key: KeyEvent, pending: &mut Pending) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     app.status.clear();
+
+    // The code-entry prompt is modal: type or paste a code, Enter loads it.
+    if app.code_entry.is_some() {
+        match key.code {
+            KeyCode::Enter => app.code_entry_submit(),
+            KeyCode::Esc => app.cancel_code_entry(),
+            KeyCode::Backspace => app.code_entry_backspace(),
+            KeyCode::Char(c) => app.code_entry_push(&c.to_string()),
+            _ => {}
+        }
+        return;
+    }
 
     // The share card is modal: y re-copies, Esc/s/q closes it.
     if app.show_share {
@@ -217,6 +237,7 @@ fn handle_key(app: &mut App, key: KeyEvent, pending: &mut Pending) {
         KeyCode::Char('c') => app.toggle_check(),
         KeyCode::Char('v') => app.toggle_match_highlight(),
         KeyCode::Char('s') => app.open_share(),
+        KeyCode::Char('p') => app.open_code_entry(),
         KeyCode::Char('d') => app.open_difficulty_menu(),
 
         // Game control.

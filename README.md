@@ -17,7 +17,10 @@ A terminal Sudoku with vim-style navigation, built with [ratatui](https://ratatu
 - A difficulty selector menu, undo / redo, hints, and a running timer.
 - A Wordle-style shareable result on completion (`s`): a spoiler-free emoji
   grid of clues vs. your placements vs. hints, plus your time, mistakes, hints,
-  and which assists you used — copied to the clipboard via OSC 52.
+  and which assists you used — copied to the system clipboard.
+- Reproducible puzzles via short share codes. Every puzzle has a code (shown in
+  the side panel and included in the shared result); press `p` to type or paste
+  a code and play the exact same puzzle a friend did.
 - A responsive layout: the board scales to the terminal size (and the side
   panel hides when the window is too narrow). Pencil-mark notes are shown when
   the window is tall enough for full-size cells.
@@ -47,6 +50,7 @@ cargo run --release
 | `d`            | Open the difficulty selector        |
 | `n` / `N`      | New game / cycle difficulty         |
 | `s`            | Share result (after solving)        |
+| `p`            | Play a shared puzzle code           |
 | `?`            | Toggle the help popup               |
 | `q`            | Quit                                |
 

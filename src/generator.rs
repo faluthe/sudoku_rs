@@ -2,8 +2,9 @@
 //! generator that carves a uniquely-solvable puzzle out of a full solution.
 
 use crate::board::Board;
+use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 /// A flat 9x9 grid of digits, where 0 means empty.
 type Grid = [u8; 81];
@@ -34,6 +35,11 @@ impl Difficulty {
             Difficulty::Hard => 2,
             Difficulty::Expert => 3,
         }
+    }
+
+    /// The difficulty at position `i` within [`Difficulty::ALL`], if any.
+    pub fn from_index(i: usize) -> Option<Difficulty> {
+        Difficulty::ALL.get(i).copied()
     }
 
     /// How many clues to aim to leave on the board.
@@ -81,6 +87,9 @@ pub struct Puzzle {
     pub board: Board,
     pub solution: Grid,
     pub difficulty: Difficulty,
+    /// The seed it was generated from; the same seed and difficulty always
+    /// reproduce this exact puzzle.
+    pub seed: u32,
 }
 
 /// Whether `val` can be placed at flat index `i` without violating row/col/box.
@@ -143,9 +152,16 @@ fn count_solutions(grid: &mut Grid, limit: usize) -> usize {
     total
 }
 
-/// Generate a puzzle of the given difficulty with a guaranteed unique solution.
+/// Generate a puzzle of the given difficulty from a fresh random seed.
 pub fn generate(difficulty: Difficulty) -> Puzzle {
-    let mut rng = rand::thread_rng();
+    generate_seeded(difficulty, rand::thread_rng().gen())
+}
+
+/// Generate a puzzle of the given difficulty with a guaranteed unique solution,
+/// deterministically from `seed`. The same `(difficulty, seed)` pair always
+/// yields the identical puzzle, which is what makes share codes reproducible.
+pub fn generate_seeded(difficulty: Difficulty, seed: u32) -> Puzzle {
+    let mut rng = StdRng::seed_from_u64(seed as u64);
 
     // 1. Build a complete, valid solution.
     let mut solution: Grid = [0; 81];
@@ -179,7 +195,60 @@ pub fn generate(difficulty: Difficulty) -> Puzzle {
         board: Board::from_digits(&puzzle),
         solution,
         difficulty,
+        seed,
     }
+}
+
+// --- Share codes ------------------------------------------------------------
+//
+// A share code packs the difficulty and seed into one base-36 token: the low
+// two bits are the difficulty index, the rest is the 32-bit seed. So a single
+// short string fully determines the puzzle.
+
+/// The shareable code for a `(difficulty, seed)` puzzle, e.g. `"3F9KQ2"`.
+pub fn encode_code(difficulty: Difficulty, seed: u32) -> String {
+    let packed = (seed as u64) << 2 | difficulty.index() as u64;
+    to_base36(packed)
+}
+
+/// Parse a share code back into its difficulty and seed. Tolerant of
+/// surrounding text: it grabs the token after a `#` if present, else the whole
+/// trimmed input, and ignores case and non-alphanumeric noise. Returns `None`
+/// if the token isn't a valid code.
+pub fn decode_code(input: &str) -> Option<(Difficulty, u32)> {
+    let region = input.rsplit_once('#').map_or(input, |(_, after)| after);
+    // The first maximal run of alphanumerics (skips leading spaces, stops at the
+    // first separator), so both a bare code and a pasted "#CODE …" line work.
+    let token: String = region
+        .chars()
+        .skip_while(|c| !c.is_ascii_alphanumeric())
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if token.is_empty() {
+        return None;
+    }
+    let packed = u64::from_str_radix(&token, 36).ok()?;
+    let seed = packed >> 2;
+    if seed > u32::MAX as u64 {
+        return None; // not one of our codes
+    }
+    let difficulty = Difficulty::from_index((packed & 3) as usize)?;
+    Some((difficulty, seed as u32))
+}
+
+/// Encode `n` as an uppercase base-36 string.
+fn to_base36(mut n: u64) -> String {
+    const D: &[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut bytes = Vec::new();
+    while n > 0 {
+        bytes.push(D[(n % 36) as usize]);
+        n /= 36;
+    }
+    bytes.reverse();
+    String::from_utf8(bytes).unwrap()
 }
 
 #[cfg(test)]
@@ -201,6 +270,38 @@ mod tests {
         let mut grid: Grid = [0; 81];
         assert!(fill(&mut grid, &mut rand::thread_rng()));
         assert!(is_full_valid(&grid));
+    }
+
+    #[test]
+    fn same_seed_reproduces_the_same_puzzle() {
+        for diff in Difficulty::ALL {
+            let a = generate_seeded(diff, 123_456);
+            let b = generate_seeded(diff, 123_456);
+            assert_eq!(a.solution, b.solution);
+            assert_eq!(a.seed, 123_456);
+            for i in 0..81 {
+                assert_eq!(a.board.value(i / 9, i % 9), b.board.value(i / 9, i % 9));
+            }
+        }
+        // A different seed should (essentially always) give a different board.
+        let a = generate_seeded(Difficulty::Easy, 1);
+        let b = generate_seeded(Difficulty::Easy, 2);
+        assert_ne!(a.solution, b.solution);
+    }
+
+    #[test]
+    fn share_code_roundtrips() {
+        for diff in Difficulty::ALL {
+            for &seed in &[0u32, 1, 42, 123_456, u32::MAX] {
+                let code = encode_code(diff, seed);
+                assert_eq!(decode_code(&code), Some((diff, seed)));
+                // Case-insensitive, and tolerant of a '#' prefix and trailing text.
+                let messy = format!("Puzzle #{} — come beat my time!", code.to_lowercase());
+                assert_eq!(decode_code(&messy), Some((diff, seed)));
+            }
+        }
+        assert_eq!(decode_code(""), None);
+        assert_eq!(decode_code("###"), None);
     }
 
     #[test]

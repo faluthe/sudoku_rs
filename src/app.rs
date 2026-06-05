@@ -26,6 +26,9 @@ pub struct App {
     pub board: Board,
     solution: [u8; 81],
     pub difficulty: Difficulty,
+    /// The seed this puzzle was generated from; combined with the difficulty it
+    /// forms the shareable code that reproduces this exact puzzle.
+    seed: u32,
     pub cursor: (usize, usize),
     pub mode: Mode,
     /// Whether to flag cells whose value disagrees with the solution.
@@ -60,18 +63,29 @@ pub struct App {
     win_elapsed: Option<Duration>,
     /// When the puzzle was solved, used to drive the win animation.
     won_at: Option<Instant>,
+    /// While `Some`, the user is typing/pasting a puzzle code; holds the buffer.
+    pub code_entry: Option<String>,
     undo_stack: Vec<Board>,
     redo_stack: Vec<Board>,
 }
 
 impl App {
-    /// Start a new game at the given difficulty.
+    /// Start a new game at the given difficulty from a fresh random seed.
     pub fn new(difficulty: Difficulty) -> Self {
-        let puzzle = generator::generate(difficulty);
+        App::from_puzzle(generator::generate(difficulty))
+    }
+
+    /// Start the specific puzzle identified by `difficulty` and `seed`.
+    pub fn new_seeded(difficulty: Difficulty, seed: u32) -> Self {
+        App::from_puzzle(generator::generate_seeded(difficulty, seed))
+    }
+
+    fn from_puzzle(puzzle: generator::Puzzle) -> Self {
         App {
             board: puzzle.board,
             solution: puzzle.solution,
             difficulty: puzzle.difficulty,
+            seed: puzzle.seed,
             cursor: (0, 0),
             mode: Mode::Normal,
             check_errors: false,
@@ -86,12 +100,13 @@ impl App {
             status: String::new(),
             show_help: false,
             difficulty_menu: false,
-            menu_index: difficulty.index(),
+            menu_index: puzzle.difficulty.index(),
             should_quit: false,
             won: false,
             start: Instant::now(),
             win_elapsed: None,
             won_at: None,
+            code_entry: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -101,6 +116,11 @@ impl App {
     pub fn new_game(&mut self, difficulty: Difficulty) {
         *self = App::new(difficulty);
         self.status = format!("New {} game", difficulty.label());
+    }
+
+    /// This puzzle's shareable code, e.g. `"3F9KQ2"`.
+    pub fn code(&self) -> String {
+        generator::encode_code(self.difficulty, self.seed)
     }
 
     pub fn is_won(&self) -> bool {
@@ -217,6 +237,51 @@ impl App {
     pub fn menu_confirm(&mut self) {
         let difficulty = Difficulty::ALL[self.menu_index];
         self.new_game(difficulty);
+    }
+
+    // --- Play-by-code -------------------------------------------------------
+
+    /// Open the prompt for entering a shared puzzle code.
+    pub fn open_code_entry(&mut self) {
+        self.code_entry = Some(String::new());
+        self.show_share = false;
+    }
+
+    pub fn cancel_code_entry(&mut self) {
+        self.code_entry = None;
+    }
+
+    /// Append typed or pasted text to the code buffer (no-op if not entering).
+    pub fn code_entry_push(&mut self, text: &str) {
+        if let Some(buf) = self.code_entry.as_mut() {
+            buf.push_str(text);
+        }
+    }
+
+    pub fn code_entry_backspace(&mut self) {
+        if let Some(buf) = self.code_entry.as_mut() {
+            buf.pop();
+        }
+    }
+
+    /// Try to start the puzzle named by the current code buffer. On success the
+    /// game is replaced; on failure the prompt stays open with an error.
+    pub fn code_entry_submit(&mut self) {
+        let buf = match self.code_entry.take() {
+            Some(b) => b,
+            None => return,
+        };
+        match generator::decode_code(&buf) {
+            Some((difficulty, seed)) => {
+                let code = generator::encode_code(difficulty, seed);
+                *self = App::new_seeded(difficulty, seed);
+                self.status = format!("Loaded puzzle #{} ({})", code, difficulty.label());
+            }
+            None => {
+                self.status = "Not a valid puzzle code".into();
+                self.code_entry = Some(buf); // keep it open so they can fix it
+            }
+        }
     }
 
     /// Snapshot the board onto the undo stack and clear the redo stack.
@@ -386,7 +451,8 @@ impl App {
             }
             s.push('\n');
         }
-        s.push_str("\n🟦 clue  🟩 you  🟧 hint");
+        s.push_str("\n🟦 clue  🟩 you  🟧 hint\n");
+        s.push_str(&format!("\n🧩 Puzzle #{}", self.code()));
         s
     }
 
@@ -448,6 +514,41 @@ mod tests {
         a.move_cursor(Direction::Down);
         a.move_cursor(Direction::Right);
         assert_eq!(a.cursor, (8, 8));
+    }
+
+    #[test]
+    fn pasting_a_code_reproduces_the_same_puzzle() {
+        // One player's game and its share code.
+        let mine = app();
+        let code = mine.code();
+
+        // A friend pastes the (possibly messy) code into their game.
+        let mut friend = App::new(Difficulty::Expert); // start unrelated
+        friend.open_code_entry();
+        friend.code_entry_push(&format!("Puzzle #{} ", code));
+        friend.code_entry_submit();
+
+        // The prompt closed and they're on the exact same board and difficulty.
+        assert!(friend.code_entry.is_none());
+        assert_eq!(friend.difficulty, mine.difficulty);
+        assert_eq!(friend.code(), code);
+        for i in 0..81 {
+            assert_eq!(
+                friend.board.value(i / 9, i % 9),
+                mine.board.value(i / 9, i % 9)
+            );
+        }
+    }
+
+    #[test]
+    fn bad_code_keeps_prompt_open() {
+        let mut a = app();
+        a.open_code_entry();
+        a.code_entry_push("###");
+        a.code_entry_submit();
+        // Rejected: prompt stays open with the buffer intact and an error set.
+        assert_eq!(a.code_entry.as_deref(), Some("###"));
+        assert!(!a.status.is_empty());
     }
 
     #[test]

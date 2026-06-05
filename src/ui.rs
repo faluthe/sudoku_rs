@@ -159,6 +159,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     if app.difficulty_menu {
         draw_difficulty_menu(f, app, area);
     }
+    if let Some(buf) = &app.code_entry {
+        draw_code_entry(f, buf, area);
+    }
 }
 
 /// The character at the intersection of horizontal line `hi` and vertical line
@@ -380,6 +383,10 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
 
     let mut lines = vec![
         Line::from(vec![label("Difficulty"), Span::raw(app.difficulty.label())]),
+        Line::from(vec![
+            label("Puzzle"),
+            Span::styled(format!("#{}", app.code()), Style::default().fg(Color::Rgb(150, 170, 210))),
+        ]),
         Line::from(vec![label("Mode"), mode]),
         Line::from(vec![label("Time"), Span::raw(timer)]),
         Line::from(vec![
@@ -466,7 +473,7 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let hint =
-        "hjkl move  1-9 set  f find  m note  x clear  u undo  H hint  v match  d difficulty  ? help  q quit";
+        "hjkl move  1-9 set  f find  m note  x clear  u undo  H hint  v match  p play code  d difficulty  ? help  q quit";
     let text = if app.status.is_empty() {
         hint.to_string()
     } else {
@@ -536,6 +543,39 @@ fn draw_win_banner(f: &mut Frame, app: &App, area: Rect, t: f32) {
     } else {
         f.render_widget(block, popup);
     }
+}
+
+/// The prompt for entering a shared puzzle code, with the typed/pasted buffer
+/// and a blinking-style block cursor.
+fn draw_code_entry(f: &mut Frame, buf: &str, area: Rect) {
+    let lines = vec![
+        Line::from(Span::styled(
+            "Play a shared puzzle",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("Type or paste a puzzle code:"),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                buf.to_string(),
+                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter load   Esc cancel",
+            Style::default().fg(Color::Gray),
+        )),
+    ];
+
+    let popup = centered_rect(46, lines.len() as u16 + 2, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    f.render_widget(Clear, popup);
+    f.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 fn draw_difficulty_menu(f: &mut Frame, app: &App, area: Rect) {
@@ -627,6 +667,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         Line::from("  v            highlight all units with this digit"),
         Line::from("  d            choose difficulty"),
         Line::from("  n  /  N       new game / cycle difficulty"),
+        Line::from("  s  /  p       share result / play a shared code"),
         Line::from("  ?            toggle this help"),
         Line::from("  q            quit"),
     ];
