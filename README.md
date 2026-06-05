@@ -15,6 +15,8 @@ A terminal Sudoku with vim-style navigation, built with [ratatui](https://ratatu
 - Pencil-mark notes shown at fixed positions within each cell.
 - A running count of how many of each digit 1–9 remain to be placed.
 - A difficulty selector menu, undo / redo, hints, and a running timer.
+- A celebratory completion animation: a rainbow wave sweeps the board and a
+  banner pops in when you solve the puzzle.
 - A Wordle-style shareable result on completion (`s`): a spoiler-free emoji
   grid of clues vs. your placements vs. hints, plus your time, mistakes, hints,
   and which assists you used — copied to the system clipboard.
