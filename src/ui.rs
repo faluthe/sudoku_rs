@@ -275,11 +275,36 @@ fn cell_bg(app: &App, r: usize, c: usize) -> Option<Color> {
     if cursor_val.is_some() && app.board.value(r, c) == cursor_val {
         return Some(BG_SAME);
     }
-    let peer = r == cr || c == cc || (r / 3 == cr / 3 && c / 3 == cc / 3);
+    // With match-highlight on, light up the unit of *every* cell holding the
+    // cursor's value; otherwise just the cursor's own row/column/box.
+    let peer = match (app.highlight_matches, cursor_val) {
+        (true, Some(v)) => unit_contains(app, r, c, v),
+        _ => r == cr || c == cc || (r / 3 == cr / 3 && c / 3 == cc / 3),
+    };
     if peer {
         return Some(BG_PEER);
     }
     None
+}
+
+/// Whether the row, column, or 3x3 box of cell (r, c) contains the value `v`
+/// anywhere. Used by match-highlight to span all units holding a digit.
+fn unit_contains(app: &App, r: usize, c: usize, v: u8) -> bool {
+    let board = &app.board;
+    for i in 0..9 {
+        if board.value(r, i) == Some(v) || board.value(i, c) == Some(v) {
+            return true;
+        }
+    }
+    let (br, bc) = (r / 3 * 3, c / 3 * 3);
+    for rr in br..br + 3 {
+        for cc in bc..bc + 3 {
+            if board.value(rr, cc) == Some(v) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn draw_board(f: &mut Frame, app: &App, area: Rect, size: &CellSize) {
@@ -365,6 +390,12 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(WRONG),
         )));
     }
+    if app.highlight_matches {
+        lines.push(Line::from(Span::styled(
+            "match-highlight ON",
+            Style::default().fg(Color::Rgb(180, 170, 90)),
+        )));
+    }
 
     // How many of each digit are still to be placed.
     lines.push(Line::from(""));
@@ -432,7 +463,7 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let hint =
-        "hjkl move  1-9 set  f find  m note  x clear  u undo  H hint  d difficulty  ? help  q quit";
+        "hjkl move  1-9 set  f find  m note  x clear  u undo  H hint  v match  d difficulty  ? help  q quit";
     let text = if app.status.is_empty() {
         hint.to_string()
     } else {
@@ -553,6 +584,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         Line::from("  u  /  Ctrl-r  undo / redo"),
         Line::from("  H            reveal current cell (hint)"),
         Line::from("  c            toggle error checking"),
+        Line::from("  v            highlight all units with this digit"),
         Line::from("  d            choose difficulty"),
         Line::from("  n  /  N       new game / cycle difficulty"),
         Line::from("  ?            toggle this help"),
@@ -567,6 +599,36 @@ fn draw_help(f: &mut Frame, area: Rect) {
         Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::board::Board;
+
+    #[test]
+    fn match_highlight_spans_every_units_with_the_digit() {
+        let mut app = App::new(Difficulty::Easy);
+        // Controlled board: two 9s in unrelated row/col/box.
+        app.board = Board::new();
+        app.board.set_value(0, 0, 9);
+        app.board.set_value(4, 4, 9);
+        app.cursor = (0, 0);
+
+        // (4, 8) shares row 4 with the second 9 but none of the cursor's units.
+        // Off: not highlighted. On: highlighted as a peer.
+        app.highlight_matches = false;
+        assert_eq!(cell_bg(&app, 4, 8), None);
+        app.highlight_matches = true;
+        assert_eq!(cell_bg(&app, 4, 8), Some(BG_PEER));
+
+        // The other 9 itself stays a same-value match, and the cursor stays selected.
+        assert_eq!(cell_bg(&app, 4, 4), Some(BG_SAME));
+        assert_eq!(cell_bg(&app, 0, 0), Some(BG_SELECT));
+
+        // A cell touching no 9's unit is left alone even with highlight on.
+        assert_eq!(cell_bg(&app, 7, 2), None);
+    }
 }
 
 /// A fixed-size rectangle centered within `area`.

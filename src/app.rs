@@ -30,6 +30,9 @@ pub struct App {
     pub mode: Mode,
     /// Whether to flag cells whose value disagrees with the solution.
     pub check_errors: bool,
+    /// Whether to highlight the rows, columns, and boxes of *every* cell sharing
+    /// the cursor's value, not just the cursor's own peers.
+    pub highlight_matches: bool,
     pub status: String,
     pub show_help: bool,
     /// Whether the difficulty-selection menu is open.
@@ -57,6 +60,7 @@ impl App {
             cursor: (0, 0),
             mode: Mode::Normal,
             check_errors: false,
+            highlight_matches: false,
             status: String::new(),
             show_help: false,
             difficulty_menu: false,
@@ -268,6 +272,15 @@ impl App {
         self.clear_peer_notes(r, c, correct);
         self.status = "Revealed".into();
         self.check_win();
+    }
+
+    pub fn toggle_match_highlight(&mut self) {
+        self.highlight_matches = !self.highlight_matches;
+        self.status = if self.highlight_matches {
+            "Match highlight on".into()
+        } else {
+            "Match highlight off".into()
+        };
     }
 
     pub fn toggle_check(&mut self) {

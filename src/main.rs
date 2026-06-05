@@ -153,6 +153,7 @@ fn handle_key(app: &mut App, key: KeyEvent, pending: &mut Pending) {
         // Assists.
         KeyCode::Char('H') => app.hint(),
         KeyCode::Char('c') => app.toggle_check(),
+        KeyCode::Char('v') => app.toggle_match_highlight(),
         KeyCode::Char('d') => app.open_difficulty_menu(),
 
         // Game control.

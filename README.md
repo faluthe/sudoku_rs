@@ -8,7 +8,8 @@ A terminal Sudoku with vim-style navigation, built with [ratatui](https://ratatu
   difficulties (Easy / Medium / Hard / Expert).
 - Vim-style keyboard navigation.
 - Live highlighting of the selected cell's row, column, and 3×3 box, plus every
-  cell sharing the selected number.
+  cell sharing the selected number. An optional match-highlight mode (`v`)
+  extends this to the row, column, and box of every cell holding that number.
 - Conflict highlighting, and an optional error-check mode that flags entries
   disagreeing with the solution.
 - Pencil-mark notes shown at fixed positions within each cell.
@@ -39,6 +40,7 @@ cargo run --release
 | `u` / `Ctrl-r` | Undo / redo                         |
 | `H`            | Reveal the current cell (hint)      |
 | `c`            | Toggle error checking               |
+| `v`            | Toggle match highlighting           |
 | `d`            | Open the difficulty selector        |
 | `n` / `N`      | New game / cycle difficulty         |
 | `?`            | Toggle the help popup               |
