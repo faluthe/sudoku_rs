@@ -55,6 +55,16 @@ impl Difficulty {
         }
     }
 
+    /// A colored emoji that flags the difficulty in shared results.
+    pub fn badge(self) -> &'static str {
+        match self {
+            Difficulty::Easy => "🟢",
+            Difficulty::Medium => "🟡",
+            Difficulty::Hard => "🟠",
+            Difficulty::Expert => "🔴",
+        }
+    }
+
     /// Cycle to the next difficulty (wraps around).
     pub fn next(self) -> Difficulty {
         match self {

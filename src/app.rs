@@ -33,6 +33,21 @@ pub struct App {
     /// Whether to highlight the rows, columns, and boxes of *every* cell sharing
     /// the cursor's value, not just the cursor's own peers.
     pub highlight_matches: bool,
+    /// Whether match-highlight was ever switched on this game (for the share card).
+    pub used_highlight: bool,
+    /// Whether error-checking was ever switched on this game (for the share card).
+    pub used_check: bool,
+    /// Number of digits placed that disagreed with the solution.
+    pub mistakes: u32,
+    /// Number of cells revealed via the hint key.
+    pub hints_used: u32,
+    /// Per-cell flag: was this cell's final value filled by a hint (vs. typed)?
+    hint_cells: [bool; 81],
+    /// Whether the post-win share card is open.
+    pub show_share: bool,
+    /// Set when the user asks to copy the share card; the frontend performs the
+    /// actual clipboard write and clears it.
+    pub copy_requested: bool,
     pub status: String,
     pub show_help: bool,
     /// Whether the difficulty-selection menu is open.
@@ -61,6 +76,13 @@ impl App {
             mode: Mode::Normal,
             check_errors: false,
             highlight_matches: false,
+            used_highlight: false,
+            used_check: false,
+            mistakes: 0,
+            hints_used: 0,
+            hint_cells: [false; 81],
+            show_share: false,
+            copy_requested: false,
             status: String::new(),
             show_help: false,
             difficulty_menu: false,
@@ -215,6 +237,12 @@ impl App {
             Mode::Normal => {
                 self.checkpoint();
                 self.board.set_value(r, c, n);
+                // A typed value that contradicts the solution is a mistake; the
+                // cell is now player-owned, so it's no longer a hint.
+                if n != self.solution[r * 9 + c] {
+                    self.mistakes += 1;
+                }
+                self.hint_cells[r * 9 + c] = false;
                 self.clear_peer_notes(r, c, n);
                 self.check_win();
             }
@@ -239,6 +267,7 @@ impl App {
         if self.board.value(r, c).is_some() {
             self.checkpoint();
             self.board.clear_value(r, c);
+            self.hint_cells[r * 9 + c] = false;
         } else if self.board.cell(r, c).notes != 0 {
             self.checkpoint();
             self.board.cell_mut(r, c).clear_notes();
@@ -269,6 +298,8 @@ impl App {
         let correct = self.solution[r * 9 + c];
         self.checkpoint();
         self.board.set_value(r, c, correct);
+        self.hint_cells[r * 9 + c] = true;
+        self.hints_used += 1;
         self.clear_peer_notes(r, c, correct);
         self.status = "Revealed".into();
         self.check_win();
@@ -276,6 +307,7 @@ impl App {
 
     pub fn toggle_match_highlight(&mut self) {
         self.highlight_matches = !self.highlight_matches;
+        self.used_highlight |= self.highlight_matches;
         self.status = if self.highlight_matches {
             "Match highlight on".into()
         } else {
@@ -285,11 +317,77 @@ impl App {
 
     pub fn toggle_check(&mut self) {
         self.check_errors = !self.check_errors;
+        self.used_check |= self.check_errors;
         self.status = if self.check_errors {
             "Error checking on".into()
         } else {
             "Error checking off".into()
         };
+    }
+
+    // --- Share card ---------------------------------------------------------
+
+    /// Open the post-win share card and request a clipboard copy.
+    pub fn open_share(&mut self) {
+        if !self.won {
+            return;
+        }
+        self.show_share = true;
+        self.copy_requested = true;
+    }
+
+    pub fn close_share(&mut self) {
+        self.show_share = false;
+    }
+
+    /// A Wordle-style, spoiler-free summary of the finished game, suitable for
+    /// pasting into a chat. Each cell becomes a colored square: a clue, a value
+    /// the player typed, or a hinted reveal.
+    pub fn share_text(&self) -> String {
+        let secs = self.elapsed().as_secs();
+        let plural = |n: u32, word: &str| {
+            if n == 1 {
+                format!("{} {}", n, word)
+            } else {
+                format!("{} {}s", n, word)
+            }
+        };
+        let flag = |on: bool| if on { "used" } else { "off" };
+
+        let mut s = String::new();
+        s.push_str(&format!(
+            "Sudoku {} {} — Solved!\n",
+            self.difficulty.badge(),
+            self.difficulty.label()
+        ));
+        s.push_str(&format!(
+            "⏱️ {:02}:{:02}  ❌ {}  💡 {}\n",
+            secs / 60,
+            secs % 60,
+            plural(self.mistakes, "mistake"),
+            plural(self.hints_used, "hint"),
+        ));
+        s.push_str(&format!(
+            "🔆 Match-highlight: {}   🔍 Error-check: {}\n\n",
+            flag(self.used_highlight),
+            flag(self.used_check),
+        ));
+
+        for r in 0..9 {
+            for c in 0..9 {
+                let sq = if self.board.is_given(r, c) {
+                    "🟦"
+                } else if self.hint_cells[r * 9 + c] {
+                    "🟧"
+                } else {
+                    "🟩"
+                };
+                s.push_str(sq);
+            }
+            s.push('\n');
+        }
+        s.push_str("\n🟦 clue  🟩 you  🟧 hint");
+        s
     }
 
     /// Whether the cell holds a value that disagrees with the solution.
@@ -452,6 +550,61 @@ mod tests {
         a.undo();
         assert!(!a.is_won());
         assert!(a.win_anim_elapsed().is_none());
+    }
+
+    #[test]
+    fn share_text_summarizes_the_game() {
+        let mut a = app();
+        // Error-check was toggled on then off; match-highlight never used.
+        a.toggle_check();
+        a.toggle_check();
+
+        let empties: Vec<(usize, usize)> = (0..9)
+            .flat_map(|r| (0..9).map(move |c| (r, c)))
+            .filter(|&(r, c)| a.board.value(r, c).is_none())
+            .collect();
+
+        // First empty: one wrong guess (a mistake), then the right value.
+        let (r0, c0) = empties[0];
+        a.cursor = (r0, c0);
+        let sol0 = a.solution[r0 * 9 + c0];
+        a.input_digit(if sol0 == 1 { 2 } else { 1 });
+        a.input_digit(sol0);
+
+        // Second empty: revealed with a hint.
+        let (r1, c1) = empties[1];
+        a.cursor = (r1, c1);
+        a.hint();
+
+        // Everything else typed correctly.
+        for &(r, c) in &empties[2..] {
+            a.cursor = (r, c);
+            a.input_digit(a.solution[r * 9 + c]);
+        }
+
+        assert!(a.is_won());
+        assert_eq!(a.mistakes, 1);
+        assert_eq!(a.hints_used, 1);
+        assert!(a.used_check);
+        assert!(!a.used_highlight);
+
+        let s = a.share_text();
+        assert!(s.contains("Solved!"));
+        assert!(s.contains("1 mistake") && !s.contains("1 mistakes"));
+        assert!(s.contains("1 hint") && !s.contains("1 hints"));
+        assert!(s.contains("Error-check: used"));
+        assert!(s.contains("Match-highlight: off"));
+
+        // Count squares in the 9-cell grid rows only (the legend line also
+        // carries one of each swatch).
+        let grid: String = s
+            .lines()
+            .filter(|l| l.chars().count() == 9 && l.chars().all(|ch| "🟦🟩🟧".contains(ch)))
+            .collect();
+        let givens = (0..81).filter(|&i| a.board.is_given(i / 9, i % 9)).count();
+        assert_eq!(grid.matches('🟧').count(), 1); // exactly one hinted cell
+        assert_eq!(grid.matches('🟦').count(), givens); // every clue
+        assert_eq!(grid.chars().count(), 81);
     }
 
     #[test]

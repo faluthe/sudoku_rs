@@ -150,6 +150,9 @@ pub fn draw(f: &mut Frame, app: &App) {
     if let Some(elapsed) = app.win_anim_elapsed() {
         draw_win_banner(f, app, body, elapsed.as_secs_f32());
     }
+    if app.show_share {
+        draw_share_card(f, app, area);
+    }
     if app.show_help {
         draw_help(f, area);
     }
@@ -506,14 +509,15 @@ fn draw_win_banner(f: &mut Frame, app: &App, area: Rect, t: f32) {
         ))
         .alignment(Alignment::Center),
         Line::from(Span::styled(
-            "n new game   q quit",
+            "s share   n new game   q quit",
             Style::default().fg(Color::Rgb(150, 150, 160)),
         ))
         .alignment(Alignment::Center),
     ];
 
-    // Unfold from a sliver to full size as the pop-in eases in.
-    let full_w: u16 = 30;
+    // Unfold from a sliver to full size as the pop-in eases in. The full width
+    // tracks the widest line (plus borders + padding) so nothing is clipped.
+    let full_w = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16 + 4;
     let full_h: u16 = 6;
     let w = (full_w as f32 * ease).round().max(1.0) as u16;
     let h = (full_h as f32 * (0.4 + 0.6 * ease)).round().max(1.0) as u16;
@@ -559,6 +563,42 @@ fn draw_difficulty_menu(f: &mut Frame, app: &App, area: Rect) {
     )));
 
     let popup = centered_rect(44, 10, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    f.render_widget(Clear, popup);
+    f.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+/// The post-win share card: the same text that gets copied to the clipboard,
+/// shown so the player can also select it by hand if OSC 52 isn't supported.
+fn draw_share_card(f: &mut Frame, app: &App, area: Rect) {
+    let share = app.share_text();
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "Share result",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    lines.extend(
+        share
+            .lines()
+            .map(|l| Line::from(l.to_string()).alignment(Alignment::Center)),
+    );
+    lines.push(Line::from(""));
+    lines.push(
+        Line::from(Span::styled(
+            "y copy   Esc close",
+            Style::default().fg(Color::Gray),
+        ))
+        .alignment(Alignment::Center),
+    );
+
+    // Size to the widest line (unicode-aware, so the emoji rows are measured
+    // correctly) plus borders and a little padding, so nothing is clipped.
+    let inner = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+    let popup = centered_rect(inner + 4, lines.len() as u16 + 2, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));

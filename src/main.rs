@@ -49,6 +49,9 @@ fn run(terminal: &mut Tui) -> io::Result<()> {
     let mut app = App::new(Difficulty::Easy);
     // Pending prefixes for the `gg` motion and the `f<digit>` find motion.
     let mut pending = Pending::default();
+    // Held open for the whole session: on X11/Wayland the clipboard contents
+    // are served by the owning process, so this must outlive each copy.
+    let mut clipboard = arboard::Clipboard::new().ok();
 
     while !app.should_quit {
         terminal.draw(|f| ui::draw(f, &app))?;
@@ -68,8 +71,57 @@ fn run(terminal: &mut Tui) -> io::Result<()> {
                 }
             }
         }
+
+        // The share card asks the frontend to put its text on the system
+        // clipboard; do it here where we own the terminal's stdout.
+        if app.copy_requested {
+            app.copy_requested = false;
+            let copied = copy_to_clipboard(clipboard.as_mut(), &app.share_text());
+            app.status = if copied {
+                "Copied to clipboard".into()
+            } else {
+                "Couldn't copy to clipboard".into()
+            };
+        }
     }
     Ok(())
+}
+
+/// Put `text` on the system clipboard. Prefers a real clipboard via arboard
+/// (which works in terminals like GNOME Terminal that ignore OSC 52), and falls
+/// back to the OSC 52 escape for remote/SSH sessions with no reachable display.
+fn copy_to_clipboard(clipboard: Option<&mut arboard::Clipboard>, text: &str) -> bool {
+    if let Some(c) = clipboard {
+        if c.set_text(text).is_ok() {
+            return true;
+        }
+    }
+    copy_osc52(text).is_ok()
+}
+
+/// Copy via the OSC 52 terminal escape — a no-dependency fallback that some
+/// terminals (and many over SSH) honor.
+fn copy_osc52(text: &str) -> io::Result<()> {
+    use std::io::Write;
+    let mut out = io::stdout();
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+    out.flush()
+}
+
+/// Minimal standard-alphabet base64 encoder (OSC 52 wants base64 payloads).
+fn base64(input: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | (*chunk.get(2).unwrap_or(&0) as u32);
+        out.push(T[(n >> 18 & 63) as usize] as char);
+        out.push(T[(n >> 12 & 63) as usize] as char);
+        out.push(if chunk.len() > 1 { T[(n >> 6 & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+    }
+    out
 }
 
 /// Tracks multi-key motions awaiting their second keypress.
@@ -84,6 +136,16 @@ struct Pending {
 fn handle_key(app: &mut App, key: KeyEvent, pending: &mut Pending) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     app.status.clear();
+
+    // The share card is modal: y re-copies, Esc/s/q closes it.
+    if app.show_share {
+        match key.code {
+            KeyCode::Char('y') => app.copy_requested = true,
+            KeyCode::Esc | KeyCode::Char('s') | KeyCode::Char('q') => app.close_share(),
+            _ => {}
+        }
+        return;
+    }
 
     // The difficulty menu is modal: it swallows all input while open.
     if app.difficulty_menu {
@@ -154,6 +216,7 @@ fn handle_key(app: &mut App, key: KeyEvent, pending: &mut Pending) {
         KeyCode::Char('H') => app.hint(),
         KeyCode::Char('c') => app.toggle_check(),
         KeyCode::Char('v') => app.toggle_match_highlight(),
+        KeyCode::Char('s') => app.open_share(),
         KeyCode::Char('d') => app.open_difficulty_menu(),
 
         // Game control.
@@ -235,6 +298,32 @@ mod render_test {
         std::thread::sleep(Duration::from_millis(900));
         let screen = rendered(&app, 90, 40);
         assert!(screen.contains("S O L V E D"));
+        // The full footer must fit — the last word was getting clipped when the
+        // banner used a fixed width narrower than its content.
+        assert!(screen.contains("s share") && screen.contains("q quit"));
+    }
+
+    #[test]
+    fn share_card_renders_without_clipping() {
+        let mut app = App::new(Difficulty::Easy);
+        for r in 0..9 {
+            for c in 0..9 {
+                if app.board.value(r, c).is_none() {
+                    app.cursor = (r, c);
+                    app.hint();
+                }
+            }
+        }
+        assert!(app.is_won());
+        app.open_share();
+        let screen = rendered(&app, 90, 40);
+        // The whole card is on screen — including the labels that were being
+        // cut off when the popup was a fixed narrow width.
+        assert!(screen.contains("Share result"));
+        assert!(screen.contains("Match-highlight"));
+        assert!(screen.contains("Error-check"));
+        assert!(screen.contains("clue") && screen.contains("hint"));
+        assert!(screen.contains("y copy"));
     }
 
     #[test]

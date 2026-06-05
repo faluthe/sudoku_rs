@@ -7,3 +7,6 @@ edition = "2021"
 ratatui = "0.26"
 crossterm = "0.27"
 rand = "0.8"
+# Text-only: skip the default image feature and its heavy dependency tree, but
+# keep the Wayland backend (GNOME's default) alongside X11.
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }

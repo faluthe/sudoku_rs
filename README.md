@@ -15,6 +15,9 @@ A terminal Sudoku with vim-style navigation, built with [ratatui](https://ratatu
 - Pencil-mark notes shown at fixed positions within each cell.
 - A running count of how many of each digit 1–9 remain to be placed.
 - A difficulty selector menu, undo / redo, hints, and a running timer.
+- A Wordle-style shareable result on completion (`s`): a spoiler-free emoji
+  grid of clues vs. your placements vs. hints, plus your time, mistakes, hints,
+  and which assists you used — copied to the clipboard via OSC 52.
 - A responsive layout: the board scales to the terminal size (and the side
   panel hides when the window is too narrow). Pencil-mark notes are shown when
   the window is tall enough for full-size cells.
@@ -43,6 +46,7 @@ cargo run --release
 | `v`            | Toggle match highlighting           |
 | `d`            | Open the difficulty selector        |
 | `n` / `N`      | New game / cycle difficulty         |
+| `s`            | Share result (after solving)        |
 | `?`            | Toggle the help popup               |
 | `q`            | Quit                                |
 
